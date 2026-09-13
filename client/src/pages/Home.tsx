@@ -63,7 +63,7 @@ type Sensitivity = {
   dpi: number;
 };
 
-type SearchResult = { deviceId: string; model: string; brand: string; device: Device; matchType: "exact-model" | "exact-alias" | "exact-brand-model" | "token" | "fuzzy" | "estimated"; confidence: number; correctedQuery?: string; source: "database" | "estimated"; sensitivity: Sensitivity; createdAt: string; };
+type SearchResult = { deviceId: string; deviceName: string; brand: string; series?: string; modelNumber?: string; variant?: string; model: string; device: Device; matchType: "exact-model" | "exact-alias" | "exact-brand-model" | "token" | "fuzzy" | "estimated" | "fallback"; confidence: number; correctedQuery?: string; source: "database" | "estimated"; sensitivity: Sensitivity; createdAt: string; };
 type SavedConfig = { id?: string; deviceId: string; deviceName: string; brand: string; profile: string; fps: number; general: number; redDot: number; scope2x: number; scope4x: number; sniper: number; camera360: number; fireButton: number; dpi: number; source?: "database" | "estimated"; createdAt: string; updatedAt?: string; };
 type HistoryItem = SavedConfig;
 type FavoriteItem = { deviceId: string; deviceName: string; createdAt: string; };
@@ -122,6 +122,9 @@ const devices: Device[] = [
   { id: "rog-phone-8", brand: "ROG", model: "Phone 8", aliases: ["rog 8", "rog phone 8", "asus rog 8"], type: "PHONE", tier: "GAMING", refreshRate: 165, touchSampling: 720, ram: 16, processorLevel: 10, os: "Android", score: 99, gradient: "from-red-400/20 to-orange-500/5", accent: "#ff7d7d" },
   { id: "ipad-pro-m2", brand: "Apple", model: "iPad Pro M2", aliases: ["ipad pro", "ipad m2", "ipad pro m2"], type: "TABLET", tier: "FLAGSHIP", refreshRate: 120, touchSampling: 240, ram: 8, processorLevel: 9, os: "iPadOS", score: 96, gradient: "from-sky-400/20 to-teal-500/5", accent: "#66e5e5" },
 ].map((device) => ({ ...device, normalizedModel: normalize(device.model), compactModel: compactNormalize(device.model), screenSize: (device as Device).screenSize ?? (device.type === "TABLET" ? 12.9 : 6.5), resolution: (device as Device).resolution ?? "unknown" }));
+
+const deviceById: Record<string, Device> = Object.fromEntries(devices.map((device) => [device.id, device]));
+const aliasMap: Record<string, string> = Object.fromEntries(devices.flatMap((device) => [device.model, ...device.aliases].map((alias) => [normalize(alias), device.id])));
 
 const brands = ["Samsung", "iPhone", "iQOO", "Xiaomi", "Redmi", "ROG", "OnePlus", "vivo", "OPPO", "realme"];
 const weapons = ["Tất cả", "M1887", "M1014", "MP40"];
@@ -200,6 +203,8 @@ function relatedVariants(query: string, primary?: Device) {
 }
 
 function rankedMatches(query: string) {
+  const aliasId = aliasMap[normalize(query)] || aliasMap[compactNormalize(query)];
+  if (aliasId && deviceById[aliasId]) return [{ device: deviceById[aliasId], score: 100, matchType: "exact-alias" as const }];
   const exact = devices.flatMap((device) => {
     const matchType = exactMatchType(query, device);
     return matchType ? [{ device, score: 100, matchType }] : [];
@@ -214,7 +219,7 @@ function searchDevice(query: string) {
   if (!match) return null;
   const exact = exactMatchType(query, match.device);
   const matchType = exact || (match.score >= 74 ? "fuzzy" : "fuzzy");
-  return { deviceId: match.device.id, device: match.device, model: match.device.model, brand: match.device.brand, matchType, confidence: exact ? 1 : match.score >= 74 ? 0.86 : 0.76, correctedQuery: exact ? undefined : `${match.device.brand} ${match.device.model}`, source: "database" as const };
+  return { deviceId: match.device.id, deviceName: `${match.device.brand} ${match.device.model}`, device: match.device, model: match.device.model, brand: match.device.brand, series: deviceIdentity(match.device).series, modelNumber: deviceIdentity(match.device).modelNumber, variant: deviceIdentity(match.device).variant, matchType, confidence: exact ? 1 : match.score >= 74 ? 0.86 : 0.76, correctedQuery: exact ? undefined : `${match.device.brand} ${match.device.model}`, source: "database" as const };
 }
 
 
@@ -353,10 +358,10 @@ export default function Home() {
       const createdAt = new Date().toISOString();
       const centralMatch = searchDevice(query);
       const matched = centralMatch?.device.id === device.id ? centralMatch.matchType : exactMatchType(`${device.brand} ${device.model}`, device);
-      const matchType: SearchResult["matchType"] = device.id.startsWith("generated-") ? "estimated" : (matched || "exact-brand-model") as SearchResult["matchType"];
-      const confidence = matchType === "estimated" ? 0.62 : matchType === "fuzzy" ? 0.86 : 1;
+      const matchType: SearchResult["matchType"] = device.id.startsWith("generated-") ? "fallback" : (matched || "exact-brand-model") as SearchResult["matchType"];
+      const confidence = matchType === "fallback" ? 0 : matchType === "estimated" ? 0.62 : matchType === "fuzzy" ? 0.86 : 1;
       setResult(next);
-      setSearchResult({ deviceId: device.id, model: device.model, brand: device.brand, device, matchType, confidence, correctedQuery: matchType === "fuzzy" ? `${device.brand} ${device.model}` : undefined, source: device.id.startsWith("generated-") ? "estimated" : "database", sensitivity: next, createdAt });
+      setSearchResult({ deviceId: device.id, deviceName: `${device.brand} ${device.model}`, model: device.model, brand: device.brand, series: device.series, modelNumber: device.modelNumber, variant: device.variant, device, matchType, confidence, correctedQuery: matchType === "fuzzy" ? `${device.brand} ${device.model}` : undefined, source: device.id.startsWith("generated-") ? "estimated" : "database", sensitivity: next, createdAt });
       localStorage.setItem("sua-profile-committed", "1");
       const saved: SavedConfig = { deviceId: device.id, deviceName: `${device.brand} ${device.model}`, brand: device.brand, profile, fps, general: next.general, redDot: next.redDot, scope2x: next.scope2x, scope4x: next.scope4x, sniper: next.sniper, camera360: next.camera360, fireButton: next.fireButton, dpi: next.dpi, createdAt };
       setLoading(false);
