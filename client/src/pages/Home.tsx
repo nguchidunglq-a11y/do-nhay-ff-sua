@@ -32,6 +32,7 @@ type Device = {
   id: string;
   brand: string;
   model: string;
+  normalizedModel?: string;
   aliases: string[];
   type: string;
   tier: string;
@@ -56,7 +57,7 @@ type Sensitivity = {
   dpi: number;
 };
 
-type SearchResult = { device: Device; source: "database" | "estimated"; sensitivity: Sensitivity; createdAt: string; };
+type SearchResult = { device: Device; matchType: "exact-model" | "exact-alias" | "exact-brand-model" | "token" | "fuzzy" | "estimated"; confidence: number; correctedQuery?: string; source: "database" | "estimated"; sensitivity: Sensitivity; createdAt: string; };
 type SavedConfig = { deviceId: string; deviceName: string; brand: string; profile: string; fps: number; general: number; redDot: number; scope2x: number; scope4x: number; sniper: number; camera360: number; fireButton: number; dpi: number; createdAt: string; };
 type HistoryItem = SavedConfig;
 type FavoriteItem = { deviceId: string; deviceName: string; createdAt: string; };
@@ -93,9 +94,13 @@ function toFavoriteItems(value: unknown): FavoriteItem[] {
 const devices: Device[] = [
   { id: "iqoo-neo-10", brand: "iQOO", model: "Neo 10", aliases: ["neo10", "iqoo neo10", "neo 10"], type: "PHONE", tier: "GAMING", refreshRate: 144, touchSampling: 2000, ram: 12, processorLevel: 9, os: "Android", score: 98, gradient: "from-lime-400/20 to-emerald-500/5", accent: "#c9ff3c" },
   { id: "samsung-s23-ultra", brand: "Samsung", model: "Galaxy S23 Ultra", aliases: ["s23 ultra", "s23u", "galaxy s23 ultra", "samsung s23", "samsung s23 ultra"], type: "PHONE", tier: "FLAGSHIP", refreshRate: 120, touchSampling: 240, ram: 12, processorLevel: 9, os: "Android", score: 95, gradient: "from-cyan-400/20 to-blue-500/5", accent: "#58d6ff" },
+  { id: "samsung-s23", brand: "Samsung", model: "Galaxy S23", aliases: ["s23", "samsung s23", "galaxy s23"], type: "PHONE", tier: "FLAGSHIP", refreshRate: 120, touchSampling: 240, ram: 8, processorLevel: 8, os: "Android", score: 94, gradient: "from-cyan-300/15 to-blue-400/5", accent: "#6edcff" },
+  { id: "samsung-s23-plus", brand: "Samsung", model: "Galaxy S23+", aliases: ["s23+", "s23 plus", "samsung s23 plus", "galaxy s23 plus"], type: "PHONE", tier: "FLAGSHIP", refreshRate: 120, touchSampling: 240, ram: 8, processorLevel: 8, os: "Android", score: 94, gradient: "from-cyan-300/15 to-blue-400/5", accent: "#6edcff" },
+  { id: "samsung-s23-fe", brand: "Samsung", model: "Galaxy S23 FE", aliases: ["s23 fe", "samsung s23 fe", "galaxy s23 fe"], type: "PHONE", tier: "FLAGSHIP", refreshRate: 120, touchSampling: 120, ram: 8, processorLevel: 7, os: "Android", score: 90, gradient: "from-cyan-300/15 to-blue-400/5", accent: "#6edcff" },
   { id: "iphone-xs", brand: "Apple", model: "iPhone XS", aliases: ["iphone xs", "iphonexs", "apple xs", "xs"], type: "PHONE", tier: "FLAGSHIP", refreshRate: 60, touchSampling: 120, ram: 4, processorLevel: 7, os: "iOS", score: 91, gradient: "from-violet-400/20 to-fuchsia-500/5", accent: "#c7a4ff" },
   { id: "samsung-s22-ultra", brand: "Samsung", model: "Galaxy S22 Ultra", aliases: ["s22 ultra", "s22u", "galaxy s22 ultra", "samsung s22", "samsung s22 ultra"], type: "PHONE", tier: "FLAGSHIP", refreshRate: 120, touchSampling: 240, ram: 8, processorLevel: 8, os: "Android", score: 93, gradient: "from-blue-400/20 to-indigo-500/5", accent: "#83b8ff" },
   { id: "redmi-note-13-pro", brand: "Xiaomi", model: "Redmi Note 13 Pro", aliases: ["redmi note 13 pro", "note 13 pro", "redmi 13 pro"], type: "PHONE", tier: "MIDRANGE", refreshRate: 120, touchSampling: 240, ram: 8, processorLevel: 7, os: "Android", score: 89, gradient: "from-orange-300/20 to-rose-500/5", accent: "#ffb87a" },
+  { id: "redmi-note-14", brand: "Redmi", model: "Redmi Note 14", aliases: ["note 14", "redmi note14", "redmi note 14"], type: "PHONE", tier: "MIDRANGE", refreshRate: 120, touchSampling: 240, ram: 8, processorLevel: 7, os: "Android", score: 88, gradient: "from-orange-300/20 to-rose-500/5", accent: "#ffb87a" },
   { id: "rog-phone-8", brand: "ROG", model: "Phone 8", aliases: ["rog 8", "rog phone 8", "asus rog 8"], type: "PHONE", tier: "GAMING", refreshRate: 165, touchSampling: 720, ram: 16, processorLevel: 10, os: "Android", score: 99, gradient: "from-red-400/20 to-orange-500/5", accent: "#ff7d7d" },
   { id: "ipad-pro-m2", brand: "Apple", model: "iPad Pro M2", aliases: ["ipad pro", "ipad m2", "ipad pro m2"], type: "TABLET", tier: "FLAGSHIP", refreshRate: 120, touchSampling: 240, ram: 8, processorLevel: 9, os: "iPadOS", score: 96, gradient: "from-sky-400/20 to-teal-500/5", accent: "#66e5e5" },
 ];
@@ -109,15 +114,51 @@ const sensitivityLabels: [keyof Sensitivity, string][] = [
 ];
 
 function normalize(text: string) {
-  return text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+  return text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim();
+}
+
+function compactNormalize(text: string) {
+  return normalize(text).replace(/[^a-z0-9+]/g, "");
+}
+
+function exactMatchType(query: string, device: Device) {
+  const q = normalize(query);
+  const compact = compactNormalize(query);
+  const model = normalize(device.normalizedModel || device.model);
+  const brandModel = normalize(`${device.brand} ${device.model}`);
+  const aliases = device.aliases.map(normalize);
+  if (q === model || compact === compactNormalize(model)) return "exact-model" as const;
+  if (aliases.some((alias) => q === alias || compact === compactNormalize(alias))) return "exact-alias" as const;
+  if (q === brandModel || compact === compactNormalize(brandModel)) return "exact-brand-model" as const;
+  const queryTokens = q.split(" ").filter(Boolean);
+  const modelTokens = model.split(" ");
+  if (queryTokens.length > 0 && queryTokens.length === modelTokens.length && queryTokens.every((token, index) => token === modelTokens[index])) return "token" as const;
+  return null;
 }
 
 function fuzzyScore(query: string, device: Device) {
-  const q = normalize(query);
+  const q = compactNormalize(query);
   if (!q) return 0;
-  const terms = [device.model, device.brand, `${device.brand}${device.model}`, ...device.aliases].map(normalize);
-  return Math.max(...terms.map((term) => term === q ? 100 : term.startsWith(q) ? 82 : term.includes(q) ? 68 : q.split(/(?=[A-Z])/).every((piece) => term.includes(normalize(piece))) ? 55 : 0));
+  const terms = [device.model, `${device.brand} ${device.model}`, ...device.aliases].map(compactNormalize);
+  return Math.max(...terms.map((term) => {
+    if (term === q) return 100;
+    if (term.startsWith(q)) return 74;
+    if (term.includes(q)) return 58;
+    let common = 0;
+    for (const char of q) if (term.includes(char)) common++;
+    return common / Math.max(q.length, 1) > 0.78 ? 42 : 0;
+  }));
 }
+
+function rankedMatches(query: string) {
+  const exact = devices.flatMap((device) => {
+    const matchType = exactMatchType(query, device);
+    return matchType ? [{ device, score: 100, matchType }] : [];
+  });
+  if (exact.length) return exact.sort((a, b) => a.device.model.length - b.device.model.length);
+  return devices.map((device) => ({ device, score: fuzzyScore(query, device), matchType: "fuzzy" as const })).filter((item) => item.score > 0).sort((a, b) => b.score - a.score).slice(0, 4);
+}
+
 
 function createFallbackDevice(query: string): Device {
   const clean = query.trim().replace(/\s+/g, " ");
@@ -173,7 +214,7 @@ export default function Home() {
   const latestRequestId = useRef(0);
 
   useEffect(() => { const timer = window.setTimeout(() => setDebouncedQuery(query), 180); return () => window.clearTimeout(timer); }, [query]);
-  const matches = useMemo(() => devices.map((device) => ({ device, score: fuzzyScore(debouncedQuery, device) })).filter((item) => item.score > 0).sort((a, b) => b.score - a.score).slice(0, 4), [debouncedQuery]);
+  const matches = useMemo(() => rankedMatches(debouncedQuery), [debouncedQuery]);
   const isFavorite = Boolean(selectedDevice && favorites.some((item) => item.deviceId === selectedDevice.id));
 
   useEffect(() => { localStorage.setItem("sua-history", JSON.stringify(history)); }, [history]);
@@ -193,8 +234,11 @@ export default function Home() {
       if (requestId !== latestRequestId.current) return;
       const next = generateSensitivity(device, profile, fps, weapon, dpi);
       const createdAt = new Date().toISOString();
+      const matched = exactMatchType(query, device);
+      const matchType = device.id.startsWith("generated-") ? "estimated" : (matched || "fuzzy");
+      const confidence = matchType === "estimated" ? 0.62 : matchType === "fuzzy" ? 0.84 : 1;
       setResult(next);
-      setSearchResult({ device, source: device.id.startsWith("generated-") ? "estimated" : "database", sensitivity: next, createdAt });
+      setSearchResult({ device, matchType, confidence, correctedQuery: matchType === "fuzzy" ? `${device.brand} ${device.model}` : undefined, source: device.id.startsWith("generated-") ? "estimated" : "database", sensitivity: next, createdAt });
       setProfileDevice(device);
       localStorage.setItem("sua-profile-committed", "1");
       const saved: SavedConfig = { deviceId: device.id, deviceName: `${device.brand} ${device.model}`, brand: device.brand, profile, fps, general: next.general, redDot: next.redDot, scope2x: next.scope2x, scope4x: next.scope4x, sniper: next.sniper, camera360: next.camera360, fireButton: next.fireButton, dpi: next.dpi, createdAt };
@@ -242,7 +286,7 @@ export default function Home() {
     <header className="site-header"><div className="header-inner"><Logo /><nav className="desktop-nav"><button className={activeSection === "home" ? "nav-active" : ""} onClick={() => navTo("home")}>Trang chủ</button><button onClick={() => navTo("result")}>Cấu hình</button><button onClick={() => navTo("library")}>Thư viện</button></nav><div className="header-search" onClick={() => searchRef.current?.focus()}><Search size={16} /><span>{query || "Tìm độ nhạy FF theo thiết bị..."}</span><kbd>⌘ K</kbd></div><div className="header-actions"><button className="icon-button" onClick={() => toast.info("Cài đặt giao diện sẽ sớm ra mắt")} aria-label="Cài đặt"><Settings2 size={18} /></button><button className="avatar-button" onClick={() => navTo("profile")} aria-label="Mở profile">S</button><button className="mobile-menu" onClick={() => toast.info("Menu mobile đang được tối ưu hóa")}><Menu size={20} /></button></div></div></header>
 
     <main>
-      <section className="hero" id="home"><div className="hero-grid" /><div className="hero-glow glow-one" /><div className="hero-glow glow-two" /><div className="container hero-content"><div className="status-line"><span className="live-dot" /> ENGINE ONLINE <span className="status-divider" /> V2.4.0 <span className="status-divider" /> <span className="status-green">99.9% READY</span></div><div className="hero-copy"><div className="hero-kicker"><Crosshair size={16} /> SMART SENSITIVITY ENGINE</div><h1>ĐỘ NHẠY FF<br /><em>SÚA</em></h1><p>Tìm và tạo độ nhạy Free Fire phù hợp — tinh chỉnh theo thiết bị, FPS và lối chơi của bạn.</p></div><div className="search-stage"><div className={`main-search ${suggestionsOpen ? "search-focused" : ""}`}><Search size={22} className="search-symbol" /><input ref={searchRef} value={query} onChange={(event) => { setQuery(event.target.value); setSuggestionsOpen(true); }} onFocus={() => setSuggestionsOpen(true)} onKeyDown={(event) => { if (event.key === "Escape") setSuggestionsOpen(false); if (event.key === "Enter" && matches[0]) { selectDevice(matches[0].device); analyze(matches[0].device); } }} placeholder="iQOO Neo 10, Samsung S23 Ultra, iPhone XS..." aria-label="Tìm độ nhạy FF theo thiết bị" />{query && <button className="clear-search" onClick={clearSearch}><X size={17} /></button>}<button className="analyze-button" onClick={() => { const target = matches[0]?.device || (query.trim() ? createFallbackDevice(query) : undefined); analyze(target); }}><Sparkles size={16} /> AUTO PHÂN TÍCH <ArrowRight size={16} /></button></div>{suggestionsOpen && query && <div className="suggestions"><div className="suggestion-head"><span>GỢI Ý</span><span>ENTER ĐỂ CHỌN</span></div>{matches.length ? matches.map(({ device }, index) => <button key={device.id} className="suggestion-item" onClick={() => selectDevice(device)}><span className="suggestion-index">0{index + 1}</span><span className="suggestion-device"><strong>{device.brand} {device.model}</strong><small>{device.type} / {device.tier}</small></span><ArrowRight size={16} /></button>) : <div className="no-match"><CircleHelp size={17} /> Có phải bạn muốn tìm <strong>{query}</strong>?</div>}</div>}</div><div className="brand-suggestions"><span>GỢI Ý NHANH</span>{brands.map((brand) => <button key={brand} onClick={() => { setQuery(brand); setSuggestionsOpen(true); }}>{brand}</button>)}</div></div></section>
+      <section className="hero" id="home"><div className="hero-grid" /><div className="hero-glow glow-one" /><div className="hero-glow glow-two" /><div className="container hero-content"><div className="status-line"><span className="live-dot" /> ENGINE ONLINE <span className="status-divider" /> V2.4.0 <span className="status-divider" /> <span className="status-green">99.9% READY</span></div><div className="hero-copy"><div className="hero-kicker"><Crosshair size={16} /> SMART SENSITIVITY ENGINE</div><h1>ĐỘ NHẠY FF<br /><em>SÚA</em></h1><p>Tìm và tạo độ nhạy Free Fire phù hợp — tinh chỉnh theo thiết bị, FPS và lối chơi của bạn.</p></div><div className="search-stage"><div className={`main-search ${suggestionsOpen ? "search-focused" : ""}`}><Search size={22} className="search-symbol" /><input ref={searchRef} value={query} onChange={(event) => { setQuery(event.target.value); setSuggestionsOpen(true); }} onFocus={() => setSuggestionsOpen(true)} onKeyDown={(event) => { if (event.key === "Escape") setSuggestionsOpen(false); if (event.key === "Enter") { const currentMatches = rankedMatches(event.currentTarget.value); const target = currentMatches[0]?.device || (event.currentTarget.value.trim() ? createFallbackDevice(event.currentTarget.value) : undefined); analyze(target); } }} placeholder="iQOO Neo 10, Samsung S23 Ultra, iPhone XS..." aria-label="Tìm độ nhạy FF theo thiết bị" />{query && <button className="clear-search" onClick={clearSearch}><X size={17} /></button>}<button className="analyze-button" onClick={() => { const currentMatches = rankedMatches(query); const target = currentMatches[0]?.device || (query.trim() ? createFallbackDevice(query) : undefined); analyze(target); }}><Sparkles size={16} /> AUTO PHÂN TÍCH <ArrowRight size={16} /></button></div>{suggestionsOpen && query && <div className="suggestions"><div className="suggestion-head"><span>GỢI Ý</span><span>ENTER ĐỂ CHỌN</span></div>{matches.length ? matches.map(({ device }, index) => <button key={device.id} className="suggestion-item" onClick={() => selectDevice(device)}><span className="suggestion-index">0{index + 1}</span><span className="suggestion-device"><strong>{device.brand} {device.model}</strong><small>{device.type} / {device.tier}</small></span><ArrowRight size={16} /></button>) : <div className="no-match"><CircleHelp size={17} /> Có phải bạn muốn tìm <strong>{query}</strong>?</div>}</div>}</div><div className="brand-suggestions"><span>GỢI Ý NHANH</span>{brands.map((brand) => <button key={brand} onClick={() => { setQuery(brand); setSuggestionsOpen(true); }}>{brand}</button>)}</div></div></section>
 
       <section className="container section-block"><div className="section-heading"><div><p className="eyebrow"><span className="eyebrow-line" /> DATA LIBRARY / 07</p><h2>Thiết bị phổ biến</h2></div><button className="text-button" onClick={() => toast.info("Đang hiển thị toàn bộ thiết bị")}>Xem tất cả <ArrowRight size={15} /></button></div><div className="device-grid">{devices.slice(0, 4).map((device) => <button key={device.id} className={`device-card bg-gradient-to-br ${device.gradient}`} onClick={() => { selectDevice(device); analyze(device); }}><div className="device-top"><span className="device-brand">{device.brand}</span><span className="device-type">{device.type}</span></div><div className="device-name">{device.model}</div><div className="device-meta"><span><Gauge size={13} /> {device.refreshRate}Hz</span><span><Zap size={13} /> {device.touchSampling}Hz touch</span></div><div className="device-score"><span>ACCURACY INDEX</span><strong style={{ color: device.accent }}>{device.score}</strong></div><div className="device-orbit"><Target size={52} style={{ color: device.accent }} /></div></button>)}</div></section>
 
