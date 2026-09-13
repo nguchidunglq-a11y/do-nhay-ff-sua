@@ -87,3 +87,10 @@
 .feedback-section .eyebrow { margin-bottom:6px; }
 .feedback-actions { display:flex; gap:8px; }
 @media (max-width:640px) { .dpi-presets { gap:5px; } .dpi-presets > div { padding:8px; } .feedback-section { display:block; } .feedback-actions { margin-top:15px; } }
+
+.profile-commit-button { align-self:center; padding:10px 12px; border:1px solid rgba(201,255,60,.45); background:rgba(201,255,60,.08); color:var(--lime); font:10px 'Space Grotesk'; letter-spacing:.04em; cursor:pointer; }
+.profile-commit-button:hover { background:var(--lime); color:var(--ink); }
+.variant-suggestions { margin-top:10px; padding:12px 14px; border-top:1px solid var(--line); color:#7f8d8d; font-size:11px; }
+.variant-suggestions strong { display:block; margin-bottom:7px; color:#bdc9c6; font:10px 'Space Grotesk'; letter-spacing:.1em; }
+.variant-suggestions span { display:inline-block; margin-right:12px; color:#8c9998; }
+@media (max-width:640px) { .profile-commit-button { width:100%; margin-bottom:10px; } }
