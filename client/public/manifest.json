@@ -1,0 +1,11 @@
+{
+  "name": "ĐỘ NHẠY FF SÚA",
+  "short_name": "FF SÚA",
+  "description": "Smart Sensitivity Engine cho Free Fire",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#080b0d",
+  "theme_color": "#080b0d",
+  "lang": "vi",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}
