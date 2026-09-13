@@ -34,6 +34,9 @@ type Device = {
   model: string;
   normalizedModel?: string;
   compactModel?: string;
+  series?: string;
+  modelNumber?: string;
+  variant?: string;
   screenSize?: number;
   resolution?: string;
   aliases: string[];
@@ -151,6 +154,30 @@ function exactMatchType(query: string, device: Device) {
   return null;
 }
 
+function parseDeviceQuery(query: string) {
+  const normalized = normalize(query);
+  const series = /\b(neo|z|galaxy s|galaxy a|galaxy z|note|iphone|redmi note|xiaomi|pixel|rog)\b/i.exec(normalized)?.[1]?.toLowerCase() || (normalized.startsWith("s") ? "s" : undefined);
+  const modelNumber = normalized.match(/(?:neo|galaxy\s+[saz]|iphone|redmi\s+note|xiaomi|pixel|rog|z|s)\s*(\d{1,3})\b/i)?.[1];
+  const variant = /\b(pro\s+max|pro\+|pro|ultra|plus|fe|se|max|mini|lite|turbo\s+pro)\b/i.exec(normalized)?.[1]?.toLowerCase() || "base";
+  const brand = /\b(iqoo|samsung|apple|iphone|xiaomi|redmi|rog|asus|oneplus|oppo|vivo|realme|pixel|google)\b/i.exec(normalized)?.[1]?.toLowerCase();
+  return { normalized, brand, series, modelNumber, variant };
+}
+
+function deviceIdentity(device: Device) {
+  const parsed = parseDeviceQuery(`${device.brand} ${device.model}`);
+  return { brand: parsed.brand || device.brand.toLowerCase(), series: parsed.series, modelNumber: parsed.modelNumber, variant: parsed.variant };
+}
+
+function isCompatibleModel(queryInfo: ReturnType<typeof parseDeviceQuery>, device: Device) {
+  const info = deviceIdentity(device);
+  if (queryInfo.brand && !info.brand.includes(queryInfo.brand) && !queryInfo.brand.includes(info.brand)) return false;
+  if (queryInfo.series && info.series && queryInfo.series !== info.series) return false;
+  if (queryInfo.modelNumber && info.modelNumber && queryInfo.modelNumber !== info.modelNumber) return false;
+  if (queryInfo.modelNumber && !info.modelNumber) return false;
+  if (queryInfo.variant && queryInfo.variant !== "base" && info.variant !== queryInfo.variant) return false;
+  return true;
+}
+
 function fuzzyScore(query: string, device: Device) {
   const q = compactNormalize(query);
   if (!q) return 0;
@@ -178,7 +205,8 @@ function rankedMatches(query: string) {
     return matchType ? [{ device, score: 100, matchType }] : [];
   });
   if (exact.length) return exact.sort((a, b) => a.device.model.length - b.device.model.length);
-  return devices.map((device) => ({ device, score: fuzzyScore(query, device), matchType: "fuzzy" as const })).filter((item) => item.score > 0).sort((a, b) => b.score - a.score).slice(0, 4);
+  const queryInfo = parseDeviceQuery(query);
+  return devices.filter((device) => isCompatibleModel(queryInfo, device)).map((device) => ({ device, score: fuzzyScore(query, device), matchType: "fuzzy" as const })).filter((item) => item.score > 0).sort((a, b) => b.score - a.score).slice(0, 4);
 }
 
 function searchDevice(query: string) {
@@ -192,9 +220,15 @@ function searchDevice(query: string) {
 
 function createFallbackDevice(query: string): Device {
   const clean = query.trim().replace(/\s+/g, " ");
-  const [brand = "Unknown", ...rest] = clean.split(" ");
-  return { id: `generated-${normalize(clean).replace(/\s+/g, "-")}`, brand, model: rest.join(" ") || clean, aliases: [], type: "PHONE", tier: "MIDRANGE", refreshRate: 90, touchSampling: 180, ram: 8, processorLevel: 6, os: "Android", score: 62, gradient: "from-slate-400/20 to-cyan-500/5", accent: "#9ab7bd" };
+  const parsed = parseDeviceQuery(clean);
+  const isIqooSeries = parsed.series === "neo" || parsed.series === "z" || /^iqoo\b/i.test(clean);
+  const inferredBrand = isIqooSeries ? "iQOO" : (clean.match(/^[A-Za-z]+/)?.[0] || "Unknown");
+  const displayModel = isIqooSeries && parsed.series && parsed.modelNumber ? `${parsed.series[0].toUpperCase()}${parsed.series.slice(1)} ${parsed.modelNumber}${parsed.variant !== "base" ? ` ${parsed.variant}` : ""}` : (clean.replace(new RegExp(`^${inferredBrand}\\s*`, "i"), "") || clean);
+  const displayName = `${inferredBrand} ${displayModel}`.trim();
+  const slug = normalize(displayName).replace(/\s+/g, "-");
+  return { id: `generated-${slug}`, brand: inferredBrand, model: displayModel, aliases: [], type: "PHONE", tier: "MIDRANGE", refreshRate: 90, touchSampling: 0, ram: 8, processorLevel: 6, os: "Android", score: 62, gradient: "from-slate-400/20 to-cyan-500/5", accent: "#9ab7bd", series: parsed.series, modelNumber: parsed.modelNumber, variant: parsed.variant };
 }
+
 
 function sensitivityCacheKey(deviceId: string, fps: number, profile: string, weapon: string, dpi: number) {
   return `sensitivity:${deviceId}:${fps}:${normalize(profile)}:${normalize(weapon)}:${dpi}`;
@@ -370,7 +404,7 @@ export default function Home() {
   };
   useEffect(() => {
     const deviceId = new URLSearchParams(window.location.search).get("device");
-    const device = deviceId ? devices.find((entry) => entry.id === deviceId) : null;
+    const device = deviceId ? devices.find((entry) => entry.id === deviceId) || (deviceId.startsWith("generated-") ? createFallbackDevice(deviceId.replace(/^generated-/, "").replace(/-/g, " ")) : null) : null;
     if (device) { setQuery(`${device.brand} ${device.model}`); analyze(device); }
   }, []);
   const navTo = (section: string) => { setActiveSection(section); if (section === "home") window.scrollTo({ top: 0, behavior: "smooth" }); else document.getElementById(section)?.scrollIntoView({ behavior: "smooth" }); };
