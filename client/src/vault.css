@@ -64,3 +64,26 @@
 .compare-row small { text-align:right; color:#758486; font:10px 'Space Grotesk'; }
 @media (max-width:920px) { .profile-strip { grid-template-columns:1fr 1fr; } .profile-intro { grid-column:1 / -1; } }
 @media (max-width:640px) { .profile-strip { display:grid; grid-template-columns:1fr; padding-top:50px; } .profile-intro { grid-column:auto; } .compare-section { padding-top:50px; } .compare-row { grid-template-columns:1fr 42px 15px 42px 32px; gap:7px; padding:0 10px; } }
+
+.dpi-presets { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:18px; }
+.dpi-presets > div { display:flex; flex-direction:column; gap:5px; padding:10px; border:1px solid var(--line); background:rgba(14,21,23,.7); }
+.dpi-presets span { color:#718082; font:9px 'Space Grotesk'; letter-spacing:.08em; }
+.dpi-presets strong { color:#bbc8c5; font:600 15px 'Space Grotesk'; }
+.dpi-presets .dpi-active { border-color:rgba(201,255,60,.4); background:rgba(201,255,60,.06); }
+.dpi-presets .dpi-active strong { color:var(--lime); }
+.engine-reasons { margin-top:15px; padding:14px; border:1px solid var(--line); background:rgba(15,23,25,.7); }
+.engine-reasons p { margin:0 0 10px; }
+.engine-reasons > div { display:flex; flex-wrap:wrap; gap:8px 14px; color:#a3b0af; font-size:10px; }
+.engine-reasons > div span { color:#a9b5b3; }
+.engine-reasons > div span::first-letter { color:var(--lime); }
+.engine-reasons small { display:block; margin-top:10px; color:#6d7b7c; font-size:10px; line-height:1.45; }
+.smart-adjust { margin-top:18px; padding-top:15px; border-top:1px solid var(--line); }
+.smart-adjust label { display:block; margin-bottom:8px; color:#758384; font:9px 'Space Grotesk'; letter-spacing:.1em; }
+.smart-adjust > div { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; }
+.smart-adjust button, .feedback-actions button { padding:9px 7px; border:1px solid var(--line); background:transparent; color:#97a4a4; font:9px 'Space Grotesk'; cursor:pointer; }
+.smart-adjust button:hover, .feedback-actions button:hover, .feedback-actions .feedback-active { color:var(--ink); border-color:var(--lime); background:var(--lime); }
+.feedback-section { display:flex; align-items:center; justify-content:space-between; gap:20px; margin-top:58px; padding:20px; border:1px solid var(--line); background:linear-gradient(120deg,rgba(22,31,32,.9),rgba(12,18,20,.85)); }
+.feedback-section h3 { margin:0; font:500 17px 'Space Grotesk'; color:#d0dbd8; }
+.feedback-section .eyebrow { margin-bottom:6px; }
+.feedback-actions { display:flex; gap:8px; }
+@media (max-width:640px) { .dpi-presets { gap:5px; } .dpi-presets > div { padding:8px; } .feedback-section { display:block; } .feedback-actions { margin-top:15px; } }
