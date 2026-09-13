@@ -56,6 +56,40 @@ type Sensitivity = {
   dpi: number;
 };
 
+type SearchResult = { device: Device; source: "database" | "estimated"; sensitivity: Sensitivity; createdAt: string; };
+type SavedConfig = { deviceId: string; deviceName: string; brand: string; profile: string; fps: number; general: number; redDot: number; scope2x: number; scope4x: number; sniper: number; camera360: number; fireButton: number; dpi: number; createdAt: string; };
+type HistoryItem = SavedConfig;
+type FavoriteItem = { deviceId: string; deviceName: string; createdAt: string; };
+
+function loadJson<T>(key: string, fallback: T): T {
+  if (typeof window === "undefined") return fallback;
+  try { return JSON.parse(localStorage.getItem(key) || "null") ?? fallback; } catch { return fallback; }
+}
+
+function toHistoryItems(value: unknown): HistoryItem[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item): HistoryItem[] => {
+    if (typeof item === "object" && item && "deviceId" in item && "deviceName" in item) return [item as HistoryItem];
+    if (typeof item === "string") {
+      const device = devices.find((entry) => entry.model === item || `${entry.brand} ${entry.model}` === item);
+      return device ? [{ deviceId: device.id, deviceName: `${device.brand} ${device.model}`, brand: device.brand, profile: "Kéo tâm", fps: 144, general: 0, redDot: 0, scope2x: 0, scope4x: 0, sniper: 0, camera360: 0, fireButton: 0, dpi: 470, createdAt: new Date().toISOString() }] : [];
+    }
+    return [];
+  });
+}
+
+function toFavoriteItems(value: unknown): FavoriteItem[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item): FavoriteItem[] => {
+    if (typeof item === "object" && item && "deviceId" in item && "deviceName" in item) return [item as FavoriteItem];
+    if (typeof item === "string") {
+      const device = devices.find((entry) => entry.id === item);
+      return device ? [{ deviceId: device.id, deviceName: `${device.brand} ${device.model}`, createdAt: new Date().toISOString() }] : [];
+    }
+    return [];
+  });
+}
+
 const devices: Device[] = [
   { id: "iqoo-neo-10", brand: "iQOO", model: "Neo 10", aliases: ["neo10", "iqoo neo10", "neo 10"], type: "PHONE", tier: "GAMING", refreshRate: 144, touchSampling: 2000, ram: 12, processorLevel: 9, os: "Android", score: 98, gradient: "from-lime-400/20 to-emerald-500/5", accent: "#c9ff3c" },
   { id: "samsung-s23-ultra", brand: "Samsung", model: "Galaxy S23 Ultra", aliases: ["s23 ultra", "s23u", "galaxy s23 ultra", "samsung s23", "samsung s23 ultra"], type: "PHONE", tier: "FLAGSHIP", refreshRate: 120, touchSampling: 240, ram: 12, processorLevel: 9, os: "Android", score: 95, gradient: "from-cyan-400/20 to-blue-500/5", accent: "#58d6ff" },
@@ -123,6 +157,7 @@ export default function Home() {
   const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
   const [profileDevice, setProfileDevice] = useState<Device | null>(() => devices.find((device) => device.id === savedProfile?.deviceId) || null);
   const [result, setResult] = useState<Sensitivity | null>(null);
+  const [searchResult, setSearchResult] = useState<SearchResult | null>(null);
   const [previousResult, setPreviousResult] = useState<Sensitivity | null>(null);
   const [profile, setProfile] = useState(savedProfile?.profile || "Kéo tâm");
   const [fps, setFps] = useState(savedProfile?.fps || 144);
@@ -131,17 +166,20 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   const [activeSection, setActiveSection] = useState("home");
-  const [history, setHistory] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem("sua-history") || "[]"); } catch { return []; } });
-  const [favorites, setFavorites] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem("sua-favorites") || "[]"); } catch { return []; } });
+  const [history, setHistory] = useState<HistoryItem[]>(() => toHistoryItems(loadJson("sua-history", [])));
+  const [favorites, setFavorites] = useState<FavoriteItem[]>(() => toFavoriteItems(loadJson("sua-favorites", [])));
+  const [savedConfigs, setSavedConfigs] = useState<HistoryItem[]>(() => toHistoryItems(loadJson("sua-saved-configs", [])));
   const searchRef = useRef<HTMLInputElement>(null);
   const latestRequestId = useRef(0);
 
   useEffect(() => { const timer = window.setTimeout(() => setDebouncedQuery(query), 180); return () => window.clearTimeout(timer); }, [query]);
   const matches = useMemo(() => devices.map((device) => ({ device, score: fuzzyScore(debouncedQuery, device) })).filter((item) => item.score > 0).sort((a, b) => b.score - a.score).slice(0, 4), [debouncedQuery]);
+  const isFavorite = Boolean(selectedDevice && favorites.some((item) => item.deviceId === selectedDevice.id));
 
   useEffect(() => { localStorage.setItem("sua-history", JSON.stringify(history)); }, [history]);
   useEffect(() => { if (profileDevice) { localStorage.setItem("sua-profile", JSON.stringify({ deviceId: profileDevice.id, profile, fps, dpi })); } }, [profileDevice, profile, fps, dpi]);
   useEffect(() => { localStorage.setItem("sua-favorites", JSON.stringify(favorites)); }, [favorites]);
+  useEffect(() => { localStorage.setItem("sua-saved-configs", JSON.stringify(savedConfigs)); }, [savedConfigs]);
   useEffect(() => { const key = (event: KeyboardEvent) => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); searchRef.current?.focus(); } }; window.addEventListener("keydown", key); return () => window.removeEventListener("keydown", key); }, []);
 
   const selectDevice = (device: Device) => { setSelectedDevice(device); setQuery(`${device.brand} ${device.model}`); setSuggestionsOpen(false); };
@@ -154,9 +192,14 @@ export default function Home() {
     window.setTimeout(() => {
       if (requestId !== latestRequestId.current) return;
       const next = generateSensitivity(device, profile, fps, weapon, dpi);
-      setResult(next); setProfileDevice(device);
+      const createdAt = new Date().toISOString();
+      setResult(next);
+      setSearchResult({ device, source: device.id.startsWith("generated-") ? "estimated" : "database", sensitivity: next, createdAt });
+      setProfileDevice(device);
       localStorage.setItem("sua-profile-committed", "1");
-      setLoading(false); setHistory((old) => [device.model, ...old.filter((item) => item !== device.model)].slice(0, 5));
+      const saved: SavedConfig = { deviceId: device.id, deviceName: `${device.brand} ${device.model}`, brand: device.brand, profile, fps, general: next.general, redDot: next.redDot, scope2x: next.scope2x, scope4x: next.scope4x, sniper: next.sniper, camera360: next.camera360, fireButton: next.fireButton, dpi: next.dpi, createdAt };
+      setLoading(false);
+      setHistory((old) => [saved, ...old.filter((item) => item.deviceId !== device.id)].slice(0, 5));
       document.getElementById("result")?.scrollIntoView({ behavior: "smooth", block: "start" });
       toast.success(`Đã phân tích cấu hình cho ${device.brand} ${device.model}`);
     }, 760);
@@ -167,10 +210,31 @@ export default function Home() {
     if (type === "profile") setProfile(String(value)); if (type === "fps") setFps(Number(value)); if (type === "weapon") setWeapon(String(value)); if (type === "dpi") setDpi(Number(value));
     setResult(generateSensitivity(selectedDevice, type === "profile" ? String(value) : profile, type === "fps" ? Number(value) : fps, type === "weapon" ? String(value) : weapon, type === "dpi" ? Number(value) : dpi));
   };
-  const clearSearch = () => { ++latestRequestId.current; setQuery(""); setDebouncedQuery(""); setSuggestionsOpen(false); setSelectedDevice(null); setResult(null); setPreviousResult(null); setLoading(false); };
+  const clearSearch = () => { ++latestRequestId.current; setQuery(""); setDebouncedQuery(""); setSuggestionsOpen(false); setSelectedDevice(null); setSearchResult(null); setResult(null); setPreviousResult(null); setLoading(false); };
   const copyResult = async () => { if (!selectedDevice || !result) return; const text = `${selectedDevice.brand} ${selectedDevice.model}\nĐộ nhạy FF SÚA\n${sensitivityLabels.map(([key, label]) => `${label}: ${result[key]}`).join("\n")}\nDPI: ${result.dpi}`; await navigator.clipboard?.writeText(text); toast.success("Đã copy cấu hình độ nhạy"); };
-  const toggleFavorite = () => { if (!selectedDevice) return; setFavorites((old) => old.includes(selectedDevice.id) ? old.filter((item) => item !== selectedDevice.id) : [...old, selectedDevice.id]); toast.success(favorites.includes(selectedDevice.id) ? "Đã bỏ khỏi yêu thích" : "Đã lưu vào yêu thích"); };
-  const share = async () => { if (!selectedDevice) return; const shareText = `Độ nhạy FF SÚA — ${selectedDevice.brand} ${selectedDevice.model}`; if (navigator.share) await navigator.share({ title: "Độ Nhạy FF SÚA", text: shareText }); else { await navigator.clipboard?.writeText(shareText); toast.success("Đã copy nội dung chia sẻ"); } };
+  const toggleFavorite = () => {
+    if (!selectedDevice) return;
+    const createdAt = new Date().toISOString();
+    const next = { deviceId: selectedDevice.id, deviceName: `${selectedDevice.brand} ${selectedDevice.model}`, createdAt };
+    if (result) {
+      const saved: SavedConfig = { deviceId: selectedDevice.id, deviceName: next.deviceName, brand: selectedDevice.brand, profile, fps, general: result.general, redDot: result.redDot, scope2x: result.scope2x, scope4x: result.scope4x, sniper: result.sniper, camera360: result.camera360, fireButton: result.fireButton, dpi: result.dpi, createdAt };
+      setSavedConfigs((old) => [saved, ...old.filter((item) => item.deviceId !== saved.deviceId)].slice(0, 12));
+    }
+    setFavorites((old) => old.some((item) => item.deviceId === next.deviceId) ? old.filter((item) => item.deviceId !== next.deviceId) : [next, ...old]);
+    toast.success(isFavorite ? "Đã cập nhật cấu hình trong hồ sơ" : "Đã lưu đúng thiết bị vào hồ sơ");
+  };
+  const share = async () => {
+    if (!selectedDevice) return;
+    const url = `${window.location.origin}/result?device=${encodeURIComponent(selectedDevice.id)}`;
+    window.history.pushState({}, "", `/result?device=${encodeURIComponent(selectedDevice.id)}`);
+    const shareText = `Độ nhạy FF SÚA — ${selectedDevice.brand} ${selectedDevice.model}\n${url}`;
+    if (navigator.share) await navigator.share({ title: "Độ Nhạy FF SÚA", text: shareText, url }); else { await navigator.clipboard?.writeText(url); toast.success("Đã copy link cấu hình"); }
+  };
+  useEffect(() => {
+    const deviceId = new URLSearchParams(window.location.search).get("device");
+    const device = deviceId ? devices.find((entry) => entry.id === deviceId) : null;
+    if (device) { setQuery(`${device.brand} ${device.model}`); analyze(device); }
+  }, []);
   const navTo = (section: string) => { setActiveSection(section); if (section === "home") window.scrollTo({ top: 0, behavior: "smooth" }); else document.getElementById(section)?.scrollIntoView({ behavior: "smooth" }); };
 
   return <div className="app-shell">
@@ -182,15 +246,15 @@ export default function Home() {
 
       <section className="container section-block"><div className="section-heading"><div><p className="eyebrow"><span className="eyebrow-line" /> DATA LIBRARY / 07</p><h2>Thiết bị phổ biến</h2></div><button className="text-button" onClick={() => toast.info("Đang hiển thị toàn bộ thiết bị")}>Xem tất cả <ArrowRight size={15} /></button></div><div className="device-grid">{devices.slice(0, 4).map((device) => <button key={device.id} className={`device-card bg-gradient-to-br ${device.gradient}`} onClick={() => { selectDevice(device); analyze(device); }}><div className="device-top"><span className="device-brand">{device.brand}</span><span className="device-type">{device.type}</span></div><div className="device-name">{device.model}</div><div className="device-meta"><span><Gauge size={13} /> {device.refreshRate}Hz</span><span><Zap size={13} /> {device.touchSampling}Hz touch</span></div><div className="device-score"><span>ACCURACY INDEX</span><strong style={{ color: device.accent }}>{device.score}</strong></div><div className="device-orbit"><Target size={52} style={{ color: device.accent }} /></div></button>)}</div></section>
 
-      {(loading || (selectedDevice && result)) && <section className="container section-block split-section" id="result"><div className="section-heading result-heading"><div><p className="eyebrow"><span className="eyebrow-line" /> ANALYSIS OUTPUT / LIVE</p><h2>Độ nhạy FF đề xuất</h2></div><div className="result-actions"><button className="small-icon-button" onClick={() => analyze(selectedDevice || undefined)} title="Phân tích lại"><RotateCcw size={15} /></button><button className={`favorite-button ${selectedDevice && favorites.includes(selectedDevice.id) ? "is-favorite" : ""}`} onClick={toggleFavorite}><Heart size={15} fill={selectedDevice && favorites.includes(selectedDevice.id) ? "currentColor" : "none"} /> {selectedDevice && favorites.includes(selectedDevice.id) ? "ĐÃ LƯU" : "LƯU"}</button></div></div><div className="result-layout"><div className="result-card">{loading ? <div className="analysis-loading"><div className="scan-ring"><Crosshair size={29} /></div><div><p className="eyebrow">PHÂN TÍCH ĐỘ NHẠY FF</p><h3>Đang phân tích {selectedDevice?.brand} {selectedDevice?.model}...</h3><div className="loading-bar"><span /></div><small>Nhận diện thiết bị · kiểm tra database · tính DPI</small></div></div> : selectedDevice && result ? <><div className="result-device"><div className="result-device-icon"><MonitorSmartphone size={22} /></div><div><span className="eyebrow">DEVICE MATCH / {selectedDevice.type}</span><h3>{selectedDevice.brand} {selectedDevice.model}</h3><div className="result-tags"><span>{selectedDevice.tier}</span><span>{selectedDevice.refreshRate}Hz</span><span>{selectedDevice.os}</span><span className="verified"><ShieldCheck size={12} /> {selectedDevice.score >= 90 ? "VERIFIED DATA" : "ESTIMATED DATA"}</span></div></div><div className="match-score"><strong>{selectedDevice.score}%</strong><span>algorithm fit</span></div></div><div className="confidence-block"><div className="confidence-copy"><span>ĐỘ TIN CẬY DỮ LIỆU</span><strong>{selectedDevice.score}%</strong></div><div className="confidence-track"><span style={{ width: `${selectedDevice.score}%` }} /></div><small><CheckCircle2 size={13} /> {selectedDevice.score >= 90 ? "Thông số thiết bị đã biết" : "Thông số ước lượng — nên tinh chỉnh thêm"}</small></div><div className="sensitivity-list">{sensitivityLabels.map(([key, label]) => <div className="sensitivity-row" key={key}><span>{label}</span><div className="sensitivity-control"><div className="sensitivity-track"><span style={{ width: `${result[key] / 2}%` }} /></div><input className="sensitivity-range" aria-label={`Chỉnh ${label}`} type="range" min="0" max="200" value={result[key]} onChange={(event) => updateSensitivity(key, Number(event.target.value))} /></div><strong>{result[key]}</strong></div>)}</div><div className="result-footer"><span><Activity size={15} /> ENGINE PRESET: {profile.toUpperCase()}</span><span>UPDATED JUST NOW</span></div></> : null}</div>{selectedDevice && result && <aside className="control-panel"><div className="panel-header"><div><span className="eyebrow">FINE TUNING</span><h3>Chỉnh cấu hình</h3></div><SlidersHorizontal size={18} /></div><div className="control-group"><label>PROFILE</label><div className="pill-grid">{profiles.map((item) => <Pill key={item} active={profile === item} onClick={() => updateChoice("profile", item)}>{item}</Pill>)}</div></div><div className="control-group"><label>FPS TARGET</label><div className="pill-grid fps-grid">{fpsOptions.map((item) => <Pill key={item} active={fps === item} onClick={() => updateChoice("fps", item)}>{item}</Pill>)}</div></div><div className="control-group"><label>VŨ KHÍ ƯU TIÊN</label><div className="select-wrap"><select value={weapon} onChange={(event) => updateChoice("weapon", event.target.value)}>{weapons.map((item) => <option key={item}>{item}</option>)}</select><ChevronDown size={16} /></div></div><div className="control-group"><div className="label-row"><label>DPI <span className="label-value">{dpi}</span></label><span className="range-caption">420 — 560</span></div><input className="range-input" type="range" min="420" max="560" step="10" value={dpi} onChange={(event) => updateChoice("dpi", Number(event.target.value))} /></div><div className="panel-actions"><button className="primary-action" onClick={copyResult}><Copy size={15} /> COPY CONFIG</button><button className="secondary-action" onClick={share}>CHIA SẺ</button></div></aside>}</div></section>}
+      {(loading || searchResult) && <section className="container section-block split-section" id="result"><div className="section-heading result-heading"><div><p className="eyebrow"><span className="eyebrow-line" /> ANALYSIS OUTPUT / LIVE</p><h2>Độ nhạy FF đề xuất</h2></div><div className="result-actions"><button className="small-icon-button" onClick={() => analyze(selectedDevice || undefined)} title="Phân tích lại"><RotateCcw size={15} /></button><button className={`favorite-button ${selectedDevice && isFavorite ? "is-favorite" : ""}`} onClick={toggleFavorite}><Heart size={15} fill={selectedDevice && isFavorite ? "currentColor" : "none"} /> {selectedDevice && isFavorite ? "ĐÃ LƯU" : "LƯU HỒ SƠ"}</button></div></div><div className="result-layout"><div className="result-card">{loading ? <div className="analysis-loading"><div className="scan-ring"><Crosshair size={29} /></div><div><p className="eyebrow">PHÂN TÍCH ĐỘ NHẠY FF</p><h3>Đang phân tích {selectedDevice?.brand} {selectedDevice?.model}...</h3><div className="loading-bar"><span /></div><small>Nhận diện thiết bị · kiểm tra database · tính DPI</small></div></div> : selectedDevice && result ? <><div className="result-device"><div className="result-device-icon"><MonitorSmartphone size={22} /></div><div><span className="eyebrow">DEVICE MATCH / {selectedDevice.type}</span><h3>{selectedDevice.brand} {selectedDevice.model}</h3><div className="result-tags"><span>{selectedDevice.tier}</span><span>{selectedDevice.refreshRate}Hz</span><span>{selectedDevice.os}</span><span className="verified"><ShieldCheck size={12} /> {selectedDevice.score >= 90 ? "VERIFIED DATA" : "ESTIMATED DATA"}</span></div></div><div className="match-score"><strong>{selectedDevice.score}%</strong><span>algorithm fit</span></div></div><div className="confidence-block"><div className="confidence-copy"><span>ĐỘ TIN CẬY DỮ LIỆU</span><strong>{selectedDevice.score}%</strong></div><div className="confidence-track"><span style={{ width: `${selectedDevice.score}%` }} /></div><small><CheckCircle2 size={13} /> {selectedDevice.score >= 90 ? "Thông số thiết bị đã biết" : "Thông số ước lượng — nên tinh chỉnh thêm"}</small></div><div className="sensitivity-list">{sensitivityLabels.map(([key, label]) => <div className="sensitivity-row" key={key}><span>{label}</span><div className="sensitivity-control"><div className="sensitivity-track"><span style={{ width: `${result[key] / 2}%` }} /></div><input className="sensitivity-range" aria-label={`Chỉnh ${label}`} type="range" min="0" max="200" value={result[key]} onChange={(event) => updateSensitivity(key, Number(event.target.value))} /></div><strong>{result[key]}</strong></div>)}</div><div className="result-footer"><span><Activity size={15} /> ENGINE PRESET: {profile.toUpperCase()}</span><span>UPDATED JUST NOW</span></div></> : null}</div>{selectedDevice && result && <aside className="control-panel"><div className="panel-header"><div><span className="eyebrow">FINE TUNING</span><h3>Chỉnh cấu hình</h3></div><SlidersHorizontal size={18} /></div><div className="control-group"><label>PROFILE</label><div className="pill-grid">{profiles.map((item) => <Pill key={item} active={profile === item} onClick={() => updateChoice("profile", item)}>{item}</Pill>)}</div></div><div className="control-group"><label>FPS TARGET</label><div className="pill-grid fps-grid">{fpsOptions.map((item) => <Pill key={item} active={fps === item} onClick={() => updateChoice("fps", item)}>{item}</Pill>)}</div></div><div className="control-group"><label>VŨ KHÍ ƯU TIÊN</label><div className="select-wrap"><select value={weapon} onChange={(event) => updateChoice("weapon", event.target.value)}>{weapons.map((item) => <option key={item}>{item}</option>)}</select><ChevronDown size={16} /></div></div><div className="control-group"><div className="label-row"><label>DPI <span className="label-value">{dpi}</span></label><span className="range-caption">420 — 560</span></div><input className="range-input" type="range" min="420" max="560" step="10" value={dpi} onChange={(event) => updateChoice("dpi", Number(event.target.value))} /></div><div className="panel-actions"><button className="primary-action" onClick={copyResult}><Copy size={15} /> COPY CONFIG</button><button className="secondary-action" onClick={share}>CHIA SẺ</button></div></aside>}</div></section>}
 
-      <section className="container profile-strip" id="profile-summary"><div className="profile-intro"><div className="profile-avatar">S</div><div><p className="eyebrow"><span className="eyebrow-line" /> CẤU HÌNH CỦA TÔI</p><h2>Hồ sơ SÚA</h2><p>{profileDevice ? "Reload web vẫn giữ thiết bị và preset bạn đang dùng." : "Phân tích một thiết bị để bắt đầu hồ sơ của bạn."}</p></div></div><div className="profile-stat"><span>THIẾT BỊ HIỆN TẠI</span><strong>{profileDevice ? `${profileDevice.brand} ${profileDevice.model}` : "Chưa chọn"}</strong><small>{profileDevice ? `${profileDevice.tier} · ${profileDevice.refreshRate}Hz` : "Đang chờ phân tích"}</small></div><div className="profile-stat"><span>CẤU HÌNH ĐANG DÙNG</span><strong>{profileDevice ? profile : "Chưa có"}</strong><small>{profileDevice ? `${fps} FPS · DPI ${dpi}` : "—"}</small></div><div className="profile-stat"><span>CẤU HÌNH ĐÃ LƯU</span><strong>{favorites.length}</strong><small>{history.length} lần tìm gần nhất</small></div></section>
+      <section className="container profile-strip" id="profile-summary"><div className="profile-intro"><div className="profile-avatar">S</div><div><p className="eyebrow"><span className="eyebrow-line" /> CẤU HÌNH CỦA TÔI</p><h2>Hồ sơ SÚA</h2><p>{profileDevice ? "Reload web vẫn giữ thiết bị và preset bạn đang dùng." : "Phân tích một thiết bị để bắt đầu hồ sơ của bạn."}</p></div></div><div className="profile-stat"><span>THIẾT BỊ HIỆN TẠI</span><strong>{profileDevice ? `${profileDevice.brand} ${profileDevice.model}` : "Chưa chọn"}</strong><small>{profileDevice ? `${profileDevice.tier} · ${profileDevice.refreshRate}Hz` : "Đang chờ phân tích"}</small></div><div className="profile-stat"><span>CẤU HÌNH ĐANG DÙNG</span><strong>{profileDevice ? profile : "Chưa có"}</strong><small>{profileDevice ? `${fps} FPS · DPI ${dpi}` : "—"}</small></div><div className="profile-stat"><span>CẤU HÌNH ĐÃ LƯU</span><strong>{savedConfigs.length}</strong><small>{history.length} lần tìm gần nhất</small></div></section>
 
 {selectedDevice && result && (
       <section className="container compare-section" id="compare"><div className="section-heading compact"><div><p className="eyebrow"><span className="eyebrow-line" /> SO SÁNH / DELTA VIEW</p><h2>Cấu hình hiện tại ↔ đề xuất</h2></div><span className="compare-note">Thay đổi được highlight</span></div><div className="compare-grid">{sensitivityLabels.slice(0, 6).map(([key, label]) => { const baseline = previousResult?.[key] ?? result[key]; const delta = result[key] - baseline; return <div className="compare-row" key={key}><span>{label}</span><strong className={delta ? "compare-changed" : ""}>{baseline}</strong><ArrowRight size={14} /><strong className={delta ? "compare-changed" : ""}>{result[key]}</strong><small>{delta > 0 ? `+${delta}` : delta || "—"}</small></div>; })}<div className="compare-row"><span>DPI</span><strong>{previousResult?.dpi ?? 470}</strong><ArrowRight size={14} /><strong className={result.dpi !== (previousResult?.dpi ?? 470) ? "compare-changed" : ""}>{result.dpi}</strong><small>{result.dpi - (previousResult?.dpi ?? 470) > 0 ? `+${result.dpi - (previousResult?.dpi ?? 470)}` : result.dpi - (previousResult?.dpi ?? 470) || "—"}</small></div></div></section>
       )}
 
-      <section className="container lower-grid" id="library"><div className="activity-card"><div className="section-heading compact"><div><p className="eyebrow"><span className="eyebrow-line" /> RECENT ACTIVITY</p><h2>Lịch sử gần đây</h2></div><History size={18} /></div>{history.length ? <div className="activity-list">{history.map((item, index) => <button key={`${item}-${index}`} onClick={() => { const device = devices.find((entry) => entry.model === item); if (device) { selectDevice(device); analyze(device); } }}><span className="activity-number">0{index + 1}</span><span><strong>{item}</strong><small>Độ nhạy FF • vừa xong</small></span><ArrowRight size={15} /></button>)}</div> : <div className="empty-activity"><History size={24} /><span>Chưa có lịch sử phân tích</span><small>Chọn một thiết bị để bắt đầu</small></div>}</div><div className="favorites-card" id="profile"><div className="section-heading compact"><div><p className="eyebrow"><span className="eyebrow-line" /> YOUR COLLECTION</p><h2>Độ nhạy yêu thích</h2></div><Heart size={18} /></div>{favorites.length ? <div className="favorite-list">{favorites.map((id) => { const device = devices.find((item) => item.id === id); return device ? <button key={id} onClick={() => { selectDevice(device); analyze(device); }}><span className="favorite-dot" style={{ background: device.accent }} /><span>{device.brand} {device.model}</span><ArrowRight size={15} /></button> : null; })}</div> : <div className="empty-activity"><Heart size={24} /><span>Lưu cấu hình bạn thích</span><small>Nhấn LƯU sau khi phân tích thiết bị</small></div>}</div></section>
+      <section className="container lower-grid" id="library"><div className="activity-card"><div className="section-heading compact"><div><p className="eyebrow"><span className="eyebrow-line" /> RECENT ACTIVITY</p><h2>Lịch sử gần đây</h2></div><History size={18} /></div>{history.length ? <div className="activity-list">{history.map((item, index) => <button key={`${item.deviceId}-${index}`} onClick={() => { const device = devices.find((entry) => entry.id === item.deviceId) || createFallbackDevice(item.deviceName); setQuery(item.deviceName); analyze(device); }}><span className="activity-number">0{index + 1}</span><span><strong>{item.deviceName}</strong><small>{item.profile} · {item.fps} FPS · DPI {item.dpi}</small></span><ArrowRight size={15} /></button>)}</div> : <div className="empty-activity"><History size={24} /><span>Chưa có lịch sử phân tích</span><small>Chọn một thiết bị để bắt đầu</small></div>}</div><div className="favorites-card" id="profile"><div className="section-heading compact"><div><p className="eyebrow"><span className="eyebrow-line" /> YOUR COLLECTION</p><h2>Độ nhạy yêu thích</h2></div><Heart size={18} /></div>{favorites.length ? <div className="favorite-list">{favorites.map((item) => { const device = devices.find((entry) => entry.id === item.deviceId); return device ? <button key={item.deviceId} onClick={() => { selectDevice(device); analyze(device); }}><span className="favorite-dot" style={{ background: device.accent }} /><span>{item.deviceName}</span><ArrowRight size={15} /></button> : null; })}</div> : <div className="empty-activity"><Heart size={24} /><span>Lưu cấu hình bạn thích</span><small>Nhấn LƯU sau khi phân tích thiết bị</small></div>}</div></section>
       <FileStoragePanel />
     </main>
 
